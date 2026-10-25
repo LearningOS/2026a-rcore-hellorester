@@ -54,6 +54,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_counts: [0; 512],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -168,4 +169,23 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Record one syscall mode by the current task.
+pub fn record_syscall(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    if syscall_id < inner.tasks[current].syscall_counts.len() {
+        inner.tasks[current].syscall_counts[syscall_id] +=1;
+    }
+}
+
+/// Return the current task's syscall count, or -1 for an invalid ID.
+pub fn get_syscall_count(syscall_id: usize) -> isize{
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    match inner.tasks[current].syscall_counts.get(syscall_id) {
+        Some(count) => *count as isize,
+        None => -1,
+    }
 }
