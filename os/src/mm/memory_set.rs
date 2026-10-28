@@ -1,4 +1,5 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
+// AI assistance: implementation developed with Codex; see reports/lab2.md.
 
 use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
@@ -40,6 +41,72 @@ pub struct MemorySet {
 }
 
 impl MemorySet {
+    /// Map a nonempty, page-aligned range if no page is already mapped.
+    pub fn map_region(
+        &mut self,
+        start: usize,
+        end: usize,
+        permission: MapPermission,
+    ) -> bool {
+        if start >= end || start % PAGE_SIZE != 0 || end % PAGE_SIZE != 0 {
+            return false;
+        }
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(end);
+        for vpn in VPNRange::new(start_va.floor(), end_va.floor()) {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return false;
+                }
+            }
+        }
+        self.insert_framed_area(start_va,end_va,permission);
+        true
+    }
+    /// Unmap a page-aligned range of mapped user memory.
+    pub fn unmap_region(&mut self, start: usize, end: usize) -> bool {
+        if start >= end || start % PAGE_SIZE != 0 || end % PAGE_SIZE != 0 {
+            return false;
+        }
+        let start_vpn = VirtAddr::from(start).floor();
+        let end_vpn = VirtAddr::from(end).floor();
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            match self.page_table.translate(vpn) {
+                Some(pte)
+                    if pte.is_valid() && pte.flags().contains(PTEFlags::U) => {}
+                _ => return false,
+            }
+        }
+        let old_areas = core::mem::take(&mut self.areas);
+        for mut area in old_areas {
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end();
+
+            if area_end <= start_vpn || area_start >= end_vpn {
+                self.areas.push(area);
+                continue;
+            }
+            let cut_start = area_start.max(start_vpn);
+            let cut_end = area_end.min(end_vpn);
+            for vpn in VPNRange::new(cut_start, cut_end) {
+                area.unmap_one(&mut self.page_table, vpn);
+            }
+            if cut_end < area_end {
+                let right_frames = area.data_frames.split_off(&cut_end);
+                self.areas.push(MapArea {
+                    vpn_range: VPNRange::new(cut_end, area_end),
+                    data_frames: right_frames,
+                    map_type: area.map_type,
+                    map_perm: area.map_perm,
+                });
+            }
+            if area_start < cut_start {
+                area.vpn_range = VPNRange::new(area_start, cut_start);
+                self.areas.push(area);
+            }
+        }
+        true
+    }
     /// Create a new empty `MemorySet`.
     pub fn new_bare() -> Self {
         Self {

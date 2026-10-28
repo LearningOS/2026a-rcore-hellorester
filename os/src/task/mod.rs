@@ -1,4 +1,5 @@
 //! Task management implementation
+// AI assistance: implementation developed with Codex; see reports/lab2.md.
 //!
 //! Everything about task management, like starting and switching tasks is
 //! implemented here.
@@ -20,6 +21,7 @@ use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
+use crate::mm::MapPermission;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
@@ -201,4 +203,41 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Record one syscall made by the current task.
+pub fn record_syscall(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    if let Some(count) = inner.tasks[current].syscall_counts.get_mut(syscall_id) {
+        *count +=1;
+    }
+}
+
+/// Return the current task's syscall count.
+pub fn get_syscall_count(syscall_id: usize) -> isize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    match inner.tasks[current].syscall_counts.get(syscall_id) {
+        Some(count) => *count as isize,
+        None => -1,
+    }
+}
+
+/// Map a virtual address range for the current task.
+pub fn map_current_task(
+    start: usize,
+    end: usize,
+    permission: MapPermission,
+) -> bool {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].memory_set.map_region(start, end, permission)
+}
+
+/// Unmap a virtual address range for the current task.
+pub fn unmap_current_task(start: usize, end: usize) -> bool {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].memory_set.unmap_region(start, end)
 }
