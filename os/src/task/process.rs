@@ -1,5 +1,6 @@
 //! Implementation of  [`ProcessControlBlock`]
 
+// AI assistance: chapter 8 changes developed with Codex; see reports/lab5.md.
 use super::id::RecycleAllocator;
 use super::manager::insert_into_pid2process;
 use super::TaskControlBlock;
@@ -49,6 +50,20 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// Whether deadlock detection is enabled for this process.
+    pub deadlock_detect_enabled: bool,
+    /// Avoidable instances of each mutex.
+     pub mutex_available: Vec<usize>,
+    /// Mutex instances held by each thread.
+    pub mutex_allocation: Vec<Vec<usize>>,
+    /// Pending mutex requests from each thread.
+    pub mutex_need: Vec<Vec<usize>>,
+    /// Available instances of each semaphore resource.
+    pub semaphore_available: Vec<usize>,
+    /// Semaphore resources held by each thread.
+    pub semaphore_allocation: Vec<Vec<usize>>,
+    /// Pending semaphore requests from each thread.
+    pub semaphore_need: Vec<Vec<usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +96,79 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    /// Check mutexes and semaphores independently.
+    pub fn deadlock_state_is_safe(&self) -> bool {
+        Self::resource_state_is_safe(
+            &self.mutex_available,
+            &self.mutex_allocation,
+            &self.mutex_need,
+        ) && Self::resource_state_is_safe(
+            &self.semaphore_available,
+            &self.semaphore_allocation,
+            &self.semaphore_need,
+        )
+    }
+    fn resource_state_is_safe(
+        available: &[usize],
+        allocation: &[Vec<usize>],
+        need: &[Vec<usize>],
+    ) -> bool {
+        if allocation.len() != need.len()
+            || allocation.iter().chain(need.iter())
+                .any(|row| row.len() != available.len())
+        {
+            return false;
+        }
+        let mut work = available.to_vec();
+        let mut finish = alloc::vec![false; allocation.len()];
+        loop {
+            if finish.iter().all(|done| *done) {
+                return true;
+            }
+            let mut progress = false;
+            for i in 0..allocation.len() {
+                if finish[i] {
+                    continue;
+                }
+                if need[i].iter().zip(work.iter()).all(|(n, w)| n <= w) {
+                    for j in 0..work.len() {
+                        work[j] += allocation[i][j];
+                    }
+                    finish[i] = true;
+                    progress = true;
+                }
+            }
+            if !progress {
+                return false;
+            }
+        }
+    }
+    /// Forget a retired thread without inventing releases of abandoned resources.
+    pub fn forget_deadlock_thread(&mut self, tid: usize) {
+        if let Some(row) = self.mutex_allocation.get_mut(tid) { row.fill(0); }
+        if let Some(row) = self.mutex_need.get_mut(tid) { row.fill(0); }
+        if let Some(row) = self.semaphore_allocation.get_mut(tid) { row.fill(0); }
+        if let Some(row) = self.semaphore_need.get_mut(tid) { row.fill(0); }
+    }
+
+    /// Ensure that a thread has records for all current resources.
+    pub fn ensure_deadlock_thread(&mut self, tid: usize) {
+        let mutex_count = self.mutex_available.len();
+        let semaphore_count = self.semaphore_available.len();
+        let rows = (tid + 1)
+            .max(self.mutex_allocation.len())
+            .max(self.mutex_need.len())
+            .max(self.semaphore_allocation.len())
+            .max(self.semaphore_need.len());
+        self.mutex_allocation
+            .resize_with(rows, || alloc::vec![0; mutex_count]);
+        self.mutex_need
+            .resize_with(rows, || alloc::vec![0; mutex_count]);
+        self.semaphore_allocation
+            .resize_with(rows, || alloc::vec![0; semaphore_count]);
+        self.semaphore_need
+            .resize_with(rows, || alloc::vec![0; semaphore_count]);
     }
 }
 
@@ -119,6 +207,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    mutex_available: Vec::new(),
+                    mutex_allocation: Vec::new(),
+                    mutex_need: Vec::new(),
+                    semaphore_available: Vec::new(),
+                    semaphore_allocation: Vec::new(),
+                    semaphore_need: Vec::new(),
                 })
             },
         });
@@ -245,6 +340,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    mutex_available: Vec::new(),
+                    mutex_allocation: Vec::new(),
+                    mutex_need: Vec::new(),
+                    semaphore_available: Vec::new(),
+                    semaphore_allocation: Vec::new(),
+                    semaphore_need: Vec::new(),
                 })
             },
         });

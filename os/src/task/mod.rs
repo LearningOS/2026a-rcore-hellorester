@@ -9,6 +9,7 @@
 //! Be careful when you see [`__switch`]. Control flow around this function
 //! might not be what you expect.
 
+// AI assistance: chapter 8 changes developed with Codex; see reports/lab5.md.
 mod context;
 mod id;
 mod manager;
@@ -87,6 +88,7 @@ pub fn exit_current_and_run_next(exit_code: i32) {
     // here we do not remove the thread since we are still using the kstack
     // it will be deallocated when sys_waittid is called
     drop(task_inner);
+    process.inner_exclusive_access().forget_deadlock_thread(tid);
 
     // Move the task to stop-wait status, to avoid kernel stack from being freed
     if tid == 0 {
@@ -158,6 +160,17 @@ pub fn exit_current_and_run_next(exit_code: i32) {
         process_inner.memory_set.recycle_data_pages();
         // drop file descriptors
         process_inner.fd_table.clear();
+        // Drop synchronization queues and their references to blocked threads.
+        process_inner.mutex_list.clear();
+        process_inner.semaphore_list.clear();
+        process_inner.condvar_list.clear();
+        process_inner.mutex_available.clear();
+        process_inner.mutex_allocation.clear();
+        process_inner.mutex_need.clear();
+        process_inner.semaphore_available.clear();
+        process_inner.semaphore_allocation.clear();
+        process_inner.semaphore_need.clear();
+        process_inner.deadlock_detect_enabled = false;
         // remove all tasks
         process_inner.tasks.clear();
     }

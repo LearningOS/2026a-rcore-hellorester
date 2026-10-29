@@ -1,3 +1,4 @@
+// AI assistance: chapter 8 changes developed with Codex; see reports/lab5.md.
 use crate::{
     mm::kernel_token,
     task::{add_task, current_task, TaskControlBlock},
@@ -35,6 +36,8 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     let new_task_res = new_task_inner.res.as_ref().unwrap();
     let new_task_tid = new_task_res.tid;
     let mut process_inner = process.inner_exclusive_access();
+    process_inner.ensure_deadlock_thread(new_task_tid);
+    process_inner.forget_deadlock_thread(new_task_tid);
     // add new thread to current process
     let tasks = &mut process_inner.tasks;
     while tasks.len() < new_task_tid + 1 {
@@ -97,6 +100,9 @@ pub fn sys_waittid(tid: usize) -> i32 {
     let mut process_inner = process.inner_exclusive_access();
     // a thread cannot wait for itself
     if task_inner.res.as_ref().unwrap().tid == tid {
+        return -1;
+    }
+    if tid >= process_inner.tasks.len() {
         return -1;
     }
     let mut exit_code: Option<i32> = None;
