@@ -1,5 +1,7 @@
 //! File and filesystem-related syscalls
-use crate::fs::{open_file, OpenFlags, Stat};
+// AI assistance: chapter 6 changes developed with Codex; see reports/lab4.md.
+use crate::fs::unlink_file;
+use crate::fs::{open_file, OpenFlags, Stat, ROOT_INODE};
 use crate::mm::{translated_byte_buffer, translated_str, UserBuffer};
 use crate::task::{current_task, current_user_token};
 
@@ -75,29 +77,58 @@ pub fn sys_close(fd: usize) -> isize {
     0
 }
 
-/// YOUR JOB: Implement fstat.
+/// Write the metadata of an open file to the user buffer.
 pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_fstat NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    let file = match inner.fd_table.get(_fd) {
+        Some(Some(file)) => file.clone(),
+        _ => return -1,
+    };
+
+    drop(inner);
+    let stat = match file.stat() {
+        Some(stat) => stat,
+        None => return -1,
+    };
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            &stat as *const Stat as *const u8,
+            core::mem::size_of::<Stat>(),
+        )
+    };
+    let buffers = translated_byte_buffer(
+        current_user_token(),
+        _st as *const u8,
+        bytes.len(),
     );
-    -1
+    let mut offset = 0;
+    for buffer in buffers {
+        let len = buffer.len();
+        buffer.copy_from_slice(&bytes[offset..offset + len]);
+        offset +=len;
+    }
+    0
 }
 
-/// YOUR JOB: Implement linkat.
+/// Create a hard link to an existing file.
 pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_linkat NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let token = current_user_token();
+    let old_name = translated_str(token, _old_name);
+    let new_name = translated_str(token, _new_name);
+    if ROOT_INODE.link(old_name.as_str(), new_name.as_str()) {
+        0
+    } else {
+        -1
+    }
 }
 
-/// YOUR JOB: Implement unlinkat.
+/// Remove a hard link to a file.
 pub fn sys_unlinkat(_name: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_unlinkat NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let name = translated_str(current_user_token(), _name);
+    if unlink_file(name.as_str()) {
+        0
+    } else {
+        -1
+    }
 }

@@ -1,4 +1,5 @@
 //! Types related to task management & Functions for completely changing TCB
+// AI assistance: chapter 6 changes developed with Codex; see reports/lab4.md.
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
@@ -71,6 +72,10 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+    /// Scheduling priority.
+    pub priority: usize,
+    /// Accumulated scheduling stride.
+    pub stride: u64,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +140,8 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         };
@@ -216,6 +223,8 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         });
